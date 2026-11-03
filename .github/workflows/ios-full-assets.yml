@@ -71,7 +71,7 @@ jobs:
           set -euo pipefail
           mkdir -p "$RUNNER_TEMP/noname-deliverables"
           python3 - <<'PY'
-          import hashlib, json, os
+          import hashlib, json, os, unicodedata
           from pathlib import Path
           source = Path('dist')
           bundled = Path('apps/mobile/native/ios/App/App/public')
@@ -89,7 +89,7 @@ jobs:
               assert len(files) > 100, f'素材目录异常：{group}，文件数 {len(files)}'
               groups[group] = len(files)
               for path in files:
-                  relative = path.relative_to(source).as_posix()
+                  relative = unicodedata.normalize('NFC', path.relative_to(source).as_posix())
                   expected = sha256(path)
                   assert (bundled / relative).is_file(), f'同步遗漏：{relative}'
                   assert sha256(bundled / relative) == expected, f'同步内容不一致：{relative}'
@@ -143,8 +143,29 @@ jobs:
           set -euo pipefail
           mkdir -p "$RUNNER_TEMP/ipa-build/Payload"
           ditto "$RUNNER_TEMP/DerivedData/Build/Products/Release-iphoneos/App.app" "$RUNNER_TEMP/ipa-build/Payload/App.app"
-          cd "$RUNNER_TEMP/ipa-build"
-          zip -qry "$RUNNER_TEMP/noname-deliverables/noname-ios-full-assets.ipa" Payload -x '*.DS_Store' -x '*/._*'
+          python3 - <<'PY'
+          import os, unicodedata, zipfile
+          from pathlib import Path
+          root = Path(os.environ['RUNNER_TEMP']) / 'ipa-build'
+          output = Path(os.environ['RUNNER_TEMP']) / 'noname-deliverables/noname-ios-full-assets.ipa'
+          names = set()
+          # 使用 UTF-8 文件名并统一规范形式，保留可执行权限与符号链接。
+          with zipfile.ZipFile(output, 'w', compression=zipfile.ZIP_DEFLATED, compresslevel=6, allowZip64=True) as archive:
+              for path in (root / 'Payload').rglob('*'):
+                  if path.name == '.DS_Store' or path.name.startswith('._'):
+                      continue
+                  name = unicodedata.normalize('NFC', path.relative_to(root).as_posix())
+                  assert name not in names, f'规范化后出现重复文件：{name}'
+                  names.add(name)
+                  if path.is_symlink():
+                      info = zipfile.ZipInfo(name)
+                      info.create_system = 3
+                      info.external_attr = path.lstat().st_mode << 16
+                      archive.writestr(info, os.readlink(path).encode('utf-8'))
+                  else:
+                      archive.write(path, name)
+          print(f'UTF-8 IPA 组装完成：{len(names)} 个条目')
+          PY
 
       - name: 校验 IPA 内每一份立绘与配音并生成校验文件
         shell: bash
