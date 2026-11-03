@@ -1,0 +1,57 @@
+name: Publish full-assets IPA download
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  actions: read
+
+jobs:
+  publish:
+    name: 发布已校验的完整素材 IPA
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: 获取已成功构建的产物
+        uses: actions/download-artifact@v4
+        with:
+          github-token: ${{ github.token }}
+          run-id: 41589852372
+          name: noname-ios-full-assets-2
+          path: ipa-artifacts
+
+      - name: 验证 IPA 摘要
+        working-directory: ipa-artifacts
+        run: sha256sum -c noname-ios-full-assets.ipa.sha256
+
+      - name: 发布永久下载资源
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPOSITORY: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          TAG='ios-full-v1.11.6.1'
+          cat > release-notes.md <<'EOF'
+          官方无名杀 v1.11.6.1 的完整素材未签名 IPA。
+
+          上游：https://github.com/libnoname/noname
+          源码提交：0b7e4be4b6ef64ab8579b2ffc643a2a626e4fede
+          构建记录：https://github.com/liuchenlin157/noname/actions/runs/41589852372
+
+          内含完整武将立绘、技能配音、阵亡配音，11,961 个素材文件已逐个核验 SHA-256。
+          IPA 未签名，请自行签名后安装；未额外捆绑第三方美化扩展。
+          本项目基于 GPL-3.0，保留原项目许可证及出处。
+          EOF
+          if ! gh release view "$TAG" --repo "$REPOSITORY" >/dev/null 2>&1; then
+            gh release create "$TAG" --repo "$REPOSITORY" \
+              --target 0b7e4be4b6ef64ab8579b2ffc643a2a626e4fede \
+              --title '无名杀 v1.11.6.1 完整素材 IPA（未签名）' \
+              --notes-file release-notes.md --latest=false
+          fi
+          gh release upload "$TAG" --repo "$REPOSITORY" --clobber \
+            ipa-artifacts/noname-ios-full-assets.ipa \
+            ipa-artifacts/noname-ios-full-assets.ipa.sha256 \
+            ipa-artifacts/build-info.json \
+            ipa-artifacts/asset-manifest-sha256.json
